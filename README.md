@@ -102,31 +102,121 @@ Records are upserted using the QBO object ID as the unique key. Processing the s
 
 ## Failure Handling
 
-The service assumes things will go wrong and tries to handle failures gracefully.
+The service is built with the assumption that failures are inevitable in distributed systems. Network issues, API rate limits, token expirations, and temporary service outages are all expected. Rather than failing catastrophically, the service implements multiple layers of resilience to ensure data consistency and minimize data loss.
 
-### API errors
+### Design Philosophy
 
-Transient errors (rate limits, server errors, network issues) trigger automatic retries with backoff. Rate limits use exponential backoff (1s, 2s, 4s). Server and network errors use linear backoff (1s, 2s, 3s). Client errors like 400 or 404 fail immediately since retrying won't help.
+**Fail-safe, not fail-fast**: The service prioritizes data integrity and recovery over immediate failure. When something goes wrong, it:
+- Preserves all successfully processed data
+- Records detailed error information for debugging
+- Automatically retries transient failures
+- Resumes from the last known good state on the next attempt
 
-### Partial sync failures
+**Isolation**: Failures in one account or object type don't affect others. If customer sync fails for Account A, invoice sync for Account A still proceeds, and Account B's syncs are unaffected.
 
-If a sync fails midway through processing batches, the checkpoint is not updated. The next sync attempt will re-query from the previous checkpoint. Since upserts are idempotent, re-processing records that were already saved doesn't cause duplicates.
+### API Error Handling
 
-### Token expiration
+The SDK implements intelligent retry logic at the HTTP request level, categorizing errors and applying appropriate strategies:
 
-Access tokens expire after about an hour. The service checks token expiry before each API call and refreshes proactively (5 minutes before expiration) rather than waiting for a failure.
+**Retryable Errors (with backoff)**:
+- **Rate Limits (429)**: Uses exponential backoff (1s, 2s, 4s) to respect QBO's rate limits. The service automatically waits longer between retries to avoid overwhelming the API.
+- **Server Errors (5xx)**: Uses linear backoff (1s, 2s, 3s) for transient server issues. These are typically temporary infrastructure problems that resolve quickly.
+- **Network Errors**: Connection timeouts, DNS failures, and other network issues use linear backoff. The service assumes these are temporary connectivity problems.
 
-If the refresh token itself is rejected (invalid_grant error), the account is flagged and skipped in future syncs until re-authorized.
+**Non-retryable Errors (fail immediately)**:
+- **Client Errors (4xx)**: Errors like 400 (Bad Request) or 404 (Not Found) indicate problems with the request itself. Retrying won't help, so the service fails immediately to avoid wasting time and API quota.
+- **Authentication Errors (401)**: Invalid or expired tokens are handled separately through the token refresh mechanism.
 
-### Sync state tracking
+**Configuration**: Retry behavior is configurable via environment variables:
+- `SYNC_MAX_RETRIES` (default: 3): Maximum number of retry attempts
+- `SYNC_RETRY_DELAY` (default: 5s): Base delay for backoff calculations
 
-Each sync attempt records:
-- When it started
-- Whether it succeeded or failed
-- The error message if it failed
-- The checkpoint if it succeeded
+### Partial Sync Failures
 
-This makes it easy to see which accounts are healthy and which need attention.
+The sync process processes records in batches. If a failure occurs midway through, the service ensures no data is lost:
+
+**Checkpoint Management**:
+- Checkpoints are only updated after a batch is **completely** processed and committed to the database
+- If a sync fails after processing 500 of 1000 records, the checkpoint remains at the previous value
+- The next sync automatically resumes from the last successful checkpoint, re-querying those 500 records
+
+**Idempotent Upserts**:
+- All database operations use upserts based on QBO object IDs
+- Re-processing the same record multiple times simply updates it rather than creating duplicates
+- This makes retries safe: even if a record was partially processed before a failure, re-processing it completes the operation correctly
+
+**Transaction Boundaries**:
+- Each batch is processed within a database transaction
+- If any record in a batch fails, the entire batch is rolled back
+- This prevents partial batches from being saved, maintaining data consistency
+
+**Independent Object Type Syncs**:
+- Customer and invoice syncs maintain separate checkpoints
+- If customer sync succeeds but invoice sync fails, customers are saved and the invoice checkpoint is not updated
+- The next sync will skip customers (already up-to-date) and retry invoices from the last checkpoint
+
+### Token Expiration and Refresh
+
+OAuth tokens have limited lifespans and require careful management:
+
+**Proactive Token Refresh**:
+- Access tokens expire after approximately 1 hour
+- The service checks token validity before **every** API call
+- Tokens are refreshed proactively 5 minutes before expiration (configurable via `TOKEN_REFRESH_BUFFER`)
+- This prevents API calls from failing due to expired tokens
+
+**Refresh Token Rotation**:
+- QBO rotates refresh tokens on each use for security
+- The service automatically persists the new refresh token to the database via a callback mechanism
+- This ensures the latest token is always available for future refreshes
+
+**Refresh Token Failures**:
+- If a refresh token is rejected (e.g., user revoked access, token expired after 100 days of inactivity), QBO returns an `invalid_grant` error
+- The service immediately marks the account as `is_token_expired = True`
+- Expired accounts are automatically skipped in future sync cycles
+- The account remains in the database with its sync state intact, ready for re-authorization
+- Re-authorization can be done via the `/api/qbo/authorize/` endpoint without losing historical data
+
+### Sync State Tracking
+
+Every sync attempt is recorded in the database for monitoring and debugging:
+
+**Per-Object-Type State**:
+- Each account has separate `SyncState` records for customers and invoices
+- Each state tracks:
+  - **Status**: `pending`, `in_progress`, `success`, or `failed`
+  - **Last attempt time**: When the sync was last attempted
+  - **Last success time**: When the sync last succeeded
+  - **Checkpoint**: The timestamp of the most recent successfully processed record
+  - **Consecutive failures**: Count of failed attempts in a row
+  - **Error message**: The most recent error message (if failed)
+
+**Benefits**:
+- **Visibility**: You can see exactly which accounts and object types are healthy
+- **Debugging**: Error messages provide context for why syncs failed
+- **Monitoring**: Consecutive failure counts help identify accounts that need attention
+- **Resume capability**: Checkpoints ensure syncs can resume from the right point
+
+**Example**: If an account shows `consecutive_failures: 3` for invoices, you know the invoice sync has been failing repeatedly and may need investigation or re-authorization.
+
+### Account-Level Failure Isolation
+
+When syncing multiple accounts, failures are isolated:
+
+**Independent Processing**:
+- Each account syncs independently in a try-catch block
+- If Account A's sync fails, Account B's sync still proceeds
+- Failed accounts are logged but don't stop the sync cycle
+
+**Error Reporting**:
+- The sync engine returns detailed results for each account
+- Failed accounts include error messages and status for each object type
+- This allows you to identify problematic accounts without affecting healthy ones
+
+**Graceful Degradation**:
+- The service continues operating even if some accounts are failing
+- Healthy accounts continue syncing on schedule
+- Problematic accounts can be fixed (re-authorized, debugged) without service downtime
 
 ## API Endpoints
 
