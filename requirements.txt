@@ -1,0 +1,19 @@
+# QBO Ingestion Service Dependencies (Django REST API)
+
+# Django framework
+Django>=4.2.0
+
+# Django REST Framework
+djangorestframework>=3.14.0
+
+# HTTP client
+requests>=2.31.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# Database URL parsing (for PostgreSQL support)
+dj-database-url>=2.1.0
+
+# PostgreSQL adapter (optional, for production)
+# psycopg2-binary>=2.9.0
