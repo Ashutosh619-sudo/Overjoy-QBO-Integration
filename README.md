@@ -12,14 +12,14 @@ A Django service that syncs Customers and Invoices from QuickBooks Online into a
 ### Installation
 
 ```bash
-cd qbo-ingestion-service
+cd Overjoy-QBO-Integration
 
 # Create virtual environment
 python3 -m venv env
 source env/bin/activate
 
 # Install dependencies
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 
 # Copy environment file
 cp env.example.txt .env
@@ -138,6 +138,12 @@ This makes it easy to see which accounts are healthy and which need attention.
 | GET | /api/qbo/sync/status/ | Check sync status |
 | GET | /api/qbo/customers/?realm_id=X | List synced customers |
 | GET | /api/qbo/invoices/?realm_id=X | List synced invoices |
+
+### Postman Collection
+
+You can import the Postman collection to test all API endpoints:
+
+[**Import Postman Collection**](https://grey-star-778986.postman.co/workspace/New-Team-Workspace~b100db5c-4fbd-4e2b-8948-d177990815b2/request/27740702-d4a87827-fcfc-4252-983e-2641be60ec25?action=share&creator=27740702&ctx=documentation)
 
 ## Project Structure
 
