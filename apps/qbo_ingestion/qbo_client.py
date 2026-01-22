@@ -53,7 +53,9 @@ class QBOClient:
             realm_id=realm_id,
             environment=settings.QBO_ENVIRONMENT,
             minor_version=settings.QBO_MINOR_VERSION,
-            on_token_refresh=on_token_refresh
+            on_token_refresh=on_token_refresh,
+            access_token=access_token,
+            token_expires_at=token_expires_at
         )
     
     @property

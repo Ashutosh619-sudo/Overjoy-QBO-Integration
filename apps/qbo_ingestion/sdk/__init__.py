@@ -5,7 +5,7 @@ Minimal SDK for syncing Customers and Invoices from QBO.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Callable
 
 import requests
@@ -75,7 +75,9 @@ class QuickBooksOnlineSDK:
         realm_id: str,
         environment: str = 'sandbox',
         minor_version: int = 65,
-        on_token_refresh: Optional[Callable[[str, str, datetime], None]] = None
+        on_token_refresh: Optional[Callable[[str, str, datetime], None]] = None,
+        access_token: Optional[str] = None,
+        token_expires_at: Optional[datetime] = None
     ):
         """
         Initialize the SDK.
@@ -88,6 +90,8 @@ class QuickBooksOnlineSDK:
             environment: 'sandbox' or 'production'
             minor_version: QBO API minor version
             on_token_refresh: Callback when tokens are refreshed
+            access_token: Current access token (optional, avoids refresh on first use)
+            token_expires_at: When access token expires (optional)
         """
         self._client_id = client_id
         self._client_secret = client_secret
@@ -103,14 +107,16 @@ class QuickBooksOnlineSDK:
             self._token_url = TOKEN_ENDPOINT_SANDBOX
             self._base_url = f"{API_BASE_SANDBOX}/{realm_id}"
         
-        self._access_token: Optional[str] = None
-        self._token_expires_at: Optional[datetime] = None
+        self._access_token: Optional[str] = access_token
+        self._token_expires_at: Optional[datetime] = token_expires_at
         
         self.customers = Customers()
         self.invoices = Invoices()
         
-        # Configure API resources
         self._configure_apis()
+        
+        if self._access_token:
+            self._update_api_tokens()
     
     @property
     def refresh_token(self) -> str:
@@ -161,7 +167,7 @@ class QuickBooksOnlineSDK:
         self._refresh_token = token_data['refresh_token']
         
         expires_in = token_data.get('expires_in', 3600)
-        self._token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+        self._token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
         
         self._update_api_tokens()
         
@@ -178,8 +184,13 @@ class QuickBooksOnlineSDK:
         """Ensure access token is valid, refreshing if needed."""
         if self._access_token is None:
             self._refresh_tokens()
-        elif self._token_expires_at and datetime.utcnow() >= self._token_expires_at - timedelta(minutes=5):
-            self._refresh_tokens()
+        elif self._token_expires_at:
+            now = datetime.now(timezone.utc)
+            expires_at = self._token_expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if now >= expires_at - timedelta(minutes=5):
+                self._refresh_tokens()
 
 
 __all__ = [
