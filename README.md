@@ -264,6 +264,8 @@ Given more time, here's what I'd focus on:
 
 **Background task queue**: The current approach runs sync in a polling loop. A proper setup would use Celery with Redis or RabbitMQ for scheduled tasks. This would make it easier to scale horizontally and handle failures with dead-letter queues.
 
+**Support for deleted entities**: The last_modified_date approach doesn't get the deleted data from QBO, we will have to use CDC if in future we need to do something to deleted entities. 
+
 **Webhooks instead of polling**: QBO supports webhooks for real-time notifications. This would reduce API calls and latency compared to polling every 5 minutes. The challenge is webhook verification and handling out-of-order events.
 
 **Token encryption**: Access and refresh tokens are stored as plain text. In production, these should be encrypted at rest using something like Fernet or a KMS.
